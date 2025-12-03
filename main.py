@@ -334,9 +334,25 @@ def main():
         action="store_true",
         help="Let the robot play first (as WHITE)"
     )
+    parser.add_argument(
+        "--no-ui",
+        action="store_true",
+        help="Run without UI (console mode)"
+    )
     
     args = parser.parse_args()
     
+    # Launch UI by default
+    if not args.no_ui:
+        from ui import TicTacToeUI
+        print("\n" + "="*60)
+        print("   TicTacToe Robot UI")
+        print("="*60 + "\n")
+        ui = TicTacToeUI(simulate_arm=args.simulate)
+        ui.run()
+        return
+    
+    # Console mode (--no-ui)
     # Determine players
     if args.robot_first:
         human_player = Player.BLACK
