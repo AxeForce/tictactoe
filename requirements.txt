@@ -1,0 +1,18 @@
+# TicTacToe Robot Requirements
+# Install with: pip install -r requirements.txt
+
+# Computer Vision
+opencv-python>=4.5.0
+numpy>=1.20.0
+
+# TFLite for piece detection
+# On Raspberry Pi, use tflite-runtime (lighter):
+tflite-runtime>=2.10.0
+# Or on PC with full TensorFlow:
+# tensorflow>=2.10.0
+
+# Inverse Kinematics
+ikpy>=3.3.0
+
+# Note: Arm_Lib is pre-installed on the DOFBOT Raspberry Pi
+# It's not available via pip - it comes with the DOFBOT image
