@@ -18,7 +18,7 @@ Controls:
 """
 
 import time
-from typing import Optional
+from typing import Optional, List, Dict, Tuple
 
 
 class ArmCalibrator:
@@ -33,64 +33,120 @@ class ArmCalibrator:
         """Initialize the calibrator."""
         self.arm = None
         self.simulate = False
-        self.current_angles = [90, 90, 90, 90, 90, 90]  # 6 servos
+        self.current_angles: List[int] = [90, 90, 90, 90, 90, 90]  # 6 servos
         self.selected_servo = 1  # Currently selected servo (1-6)
         self.step_size = 5  # Degrees per step
         
-        self.calibrated_positions = {}
+        self.calibrated_positions: Dict[str, List[int]] = {}
         
         self._init_arm()
     
     def _init_arm(self):
         """Initialize the arm."""
         try:
+            # Try to import Arm_Lib - this is hardware-specific for DOFBOT
+            # Note: Arm_Lib is pre-installed on DOFBOT Raspberry Pi image
+            # It's not available via pip and will cause ImportError on other systems
             from Arm_Lib import Arm_Device
             self.arm = Arm_Device()
-            print("Arm connected!")
+            print("Arm hardware connected!")
             
-            # Read current positions
-            for i in range(6):
-                angle = self.arm.Arm_serial_servo_read(i + 1)
-                if angle is not None:
-                    self.current_angles[i] = angle
-            
-            print(f"Current angles: {self.current_angles}")
+            # Read current positions from hardware
+            try:
+                for i in range(6):
+                    angle = self.arm.Arm_serial_servo_read(i + 1)
+                    if angle is not None and isinstance(angle, (int, float)):
+                        self.current_angles[i] = int(angle)
+                
+                print(f"Current angles from hardware: {self.current_angles}")
+            except Exception as read_error:
+                print(f"Warning: Could not read current angles: {read_error}")
+                print("Using default angles: [90, 90, 90, 90, 90, 90]")
             
         except ImportError:
             print("Arm_Lib not available. Running in simulation mode.")
+            print("Note: Arm_Lib is pre-installed on DOFBOT Raspberry Pi image.")
+            print("To use hardware mode, run this on the DOFBOT Raspberry Pi.")
             self.simulate = True
         except Exception as e:
-            print(f"Error connecting to arm: {e}")
+            print(f"Error connecting to arm hardware: {e}")
+            print("Falling back to simulation mode.")
             self.simulate = True
     
-    def move_servo(self, servo_id: int, angle: int, speed_ms: int = 500):
-        """Move a single servo."""
+    def move_servo(self, servo_id: int, angle: int, speed_ms: int = 500) -> bool:
+        """
+        Move a single servo.
+        
+        Args:
+            servo_id: Servo number (1-6)
+            angle: Target angle in degrees (0-180)
+            speed_ms: Movement speed in milliseconds
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not 1 <= servo_id <= 6:
+            print(f"Error: Invalid servo_id {servo_id}. Must be 1-6.")
+            return False
+            
+        # Clamp angle to valid range
         angle = max(0, min(180, angle))
         self.current_angles[servo_id - 1] = angle
         
         if self.simulate:
             print(f"[SIM] Servo {servo_id} -> {angle}°")
-        else:
+            return True
+        
+        try:
             self.arm.Arm_serial_servo_write(servo_id, angle, speed_ms)
             time.sleep(speed_ms / 1000 + 0.1)
+            return True
+        except Exception as e:
+            print(f"Error moving servo {servo_id}: {e}")
+            return False
     
-    def move_all(self, angles: list, speed_ms: int = 800):
-        """Move all servos."""
+    def move_all(self, angles: List[int], speed_ms: int = 800) -> bool:
+        """
+        Move all servos.
+        
+        Args:
+            angles: List of 6 angles for servos 1-6
+            speed_ms: Movement speed in milliseconds
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if len(angles) != 6:
+            print(f"Error: Need 6 angles, got {len(angles)}")
+            return False
+            
+        # Clamp all angles to valid range
         for i, angle in enumerate(angles):
-            self.current_angles[i] = max(0, min(180, angle))
+            self.current_angles[i] = max(0, min(180, int(angle)))
         
         if self.simulate:
             print(f"[SIM] All servos -> {self.current_angles}")
-        else:
+            return True
+        
+        try:
             self.arm.Arm_serial_servo_write6(*self.current_angles, speed_ms)
             time.sleep(speed_ms / 1000 + 0.2)
+            return True
+        except Exception as e:
+            print(f"Error moving all servos: {e}")
+            return False
     
-    def go_home(self):
-        """Move to home position."""
+    def go_home(self) -> bool:
+        """
+        Move to home position.
+        
+        Returns:
+            True if successful, False otherwise
+        """
         print("Going to home position...")
-        self.move_all([90, 90, 90, 90, 90, 90])
+        return self.move_all([90, 90, 90, 90, 90, 90])
     
-    def print_angles(self):
+    def print_angles(self) -> None:
         """Print current servo angles."""
         print("\nCurrent Angles:")
         labels = ["Base", "Shoulder", "Elbow", "Wrist Pitch", "Wrist Roll", "Gripper"]
@@ -98,18 +154,41 @@ class ArmCalibrator:
             marker = " <--" if i + 1 == self.selected_servo else ""
             print(f"  Servo {i+1} ({label}): {angle}°{marker}")
     
-    def save_position(self, name: str):
-        """Save current position with a name."""
+    def save_position(self, name: str) -> None:
+        """
+        Save current position with a name.
+        
+        Args:
+            name: Name/identifier for the position
+        """
+        if not name.strip():
+            print("Error: Position name cannot be empty")
+            return
+            
         self.calibrated_positions[name] = list(self.current_angles[:5])  # Exclude gripper
         print(f"Saved position '{name}': {self.current_angles[:5]}")
     
-    def calibrate_cell(self, row: int, col: int):
-        """Interactively calibrate a cell position."""
+    def calibrate_cell(self, row: int, col: int) -> None:
+        """
+        Interactively calibrate a cell position.
+        
+        Args:
+            row: Row index (0-2)
+            col: Column index (0-2)
+        """
+        if not (0 <= row <= 2 and 0 <= col <= 2):
+            print("Error: Row and col must be between 0 and 2")
+            return
+            
         print(f"\n=== Calibrating Cell ({row}, {col}) ===")
         print("Move the gripper to the center of the cell.")
         print("Press Enter when positioned correctly.")
         
-        input("Press Enter to save position...")
+        try:
+            input("Press Enter to save position...")
+        except KeyboardInterrupt:
+            print("\nCalibration cancelled.")
+            return
         
         name = f"cell_{row}_{col}"
         self.save_position(name)
@@ -195,18 +274,29 @@ class ArmCalibrator:
         print("\nCalibration complete!")
         self._generate_output()
     
-    def _generate_output(self):
+    def _generate_output(self) -> None:
         """Generate Python code for calibrated positions."""
         print("\n" + "="*60)
         print("   Generated Configuration Code")
         print("="*60)
         print("\n# Copy this to arm_control/config.py\n")
         print("CALIBRATED_POSITIONS = {")
-        for name, angles in sorted(self.calibrated_positions.items()):
+        
+        # Sort cell positions by row, then col
+        cell_positions = {}
+        for name, angles in self.calibrated_positions.items():
             if name.startswith("cell_"):
-                parts = name.split("_")
-                row, col = int(parts[1]), int(parts[2])
-                print(f"    ({row}, {col}): {tuple(int(a) for a in angles)},")
+                try:
+                    parts = name.split("_")
+                    row, col = int(parts[1]), int(parts[2])
+                    cell_positions[(row, col)] = tuple(int(a) for a in angles)
+                except (ValueError, IndexError):
+                    print(f"    # Warning: Invalid cell name format: {name}")
+        
+        # Print cell positions in order
+        for (row, col), angles in sorted(cell_positions.items()):
+            print(f"    ({row}, {col}): {angles},")
+        
         print("}")
         
         # Print staging positions if calibrated
@@ -214,6 +304,14 @@ class ArmCalibrator:
         if staging:
             print("\n# Staging positions")
             for name, angles in staging.items():
+                print(f"# {name}: {tuple(int(a) for a in angles)}")
+        
+        # Print other positions
+        other = {k: v for k, v in self.calibrated_positions.items()
+                if not k.startswith("cell_") and "staging" not in k}
+        if other:
+            print("\n# Other positions")
+            for name, angles in other.items():
                 print(f"# {name}: {tuple(int(a) for a in angles)}")
         
         print("\n" + "="*60)

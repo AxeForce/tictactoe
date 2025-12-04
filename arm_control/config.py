@@ -15,8 +15,24 @@ class ArmConfig:
     """
     
     # ==================== URDF PATH ====================
-    # Path to the DOFBOT URDF file (on the Raspberry Pi)
-    URDF_PATH = "/home/dofbot/dobot_ws/src/dofbot_moveit/urdf/dofbot.urdf"
+    # Path to the DOFBOT URDF file - multiple possible locations
+    # The system will try these in order
+    URDF_PATHS = [
+        # Project local URDF (primary choice for this setup)
+        "./urdf/dofbot.urdf",
+        "urdf/dofbot.urdf",
+        # Standard DOFBOT Raspberry Pi location
+        "/home/dofbot/dobot_ws/src/dofbot_moveit/urdf/dofbot.urdf",
+        # Docker container mount locations
+        "/dofbot/urdf/dofbot.urdf",
+        "/workspace/dofbot.urdf",
+        "/app/dofbot.urdf",
+        # Fallback (will trigger manual chain creation)
+        ""
+    ]
+    
+    # Legacy support - keep for backward compatibility
+    URDF_PATH = URDF_PATHS[0]
     
     # ==================== DOFBOT LINK LENGTHS (meters) ====================
     # These are approximate - measure your actual robot!
@@ -47,12 +63,12 @@ class ArmConfig:
     
     # Board origin (corner closest to robot)
     # CALIBRATE THESE FOR YOUR SETUP!
-    BOARD_ORIGIN_X = 0.15   # 15cm in front of robot
+    BOARD_ORIGIN_X = 0.0135   # 15cm in front of robot
     BOARD_ORIGIN_Y = -0.12  # 12cm to the right
     BOARD_ORIGIN_Z = 0.02   # 2cm above base level
     
     # Board cell size in METERS
-    CELL_SIZE = 0.08  # 8cm = 80mm per cell
+    CELL_SIZE = 0.03  # 8cm = 80mm per cell
     
     # ==================== MOVEMENT HEIGHTS ====================
     # All heights relative to board surface (in meters)

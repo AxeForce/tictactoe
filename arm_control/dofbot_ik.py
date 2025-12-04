@@ -37,22 +37,37 @@ class DofbotIK:
         """Try to load ikpy and create the kinematic chain."""
         try:
             import ikpy.chain
+            import os
             
-            # Try to load from URDF
-            try:
-                print(f"Loading URDF from {self.config.URDF_PATH}...")
-                self.chain = ikpy.chain.Chain.from_urdf_file(
-                    self.config.URDF_PATH,
-                    # Only include active joints (not base frame or gripper)
-                    active_links_mask=[False, True, True, True, True, True, False]
-                )
-                self.use_ikpy = True
-                print("URDF loaded successfully!")
+            # Try to load from URDF - check multiple possible paths
+            urdf_loaded = False
+            for urdf_path in self.config.URDF_PATHS:
+                if not urdf_path.strip():  # Skip empty paths
+                    continue
+                    
+                try:
+                    print(f"Attempting to load URDF from {urdf_path}...")
+                    if os.path.exists(urdf_path):
+                        self.chain = ikpy.chain.Chain.from_urdf_file(
+                            urdf_path,
+                            # Only include active joints (not base frame)
+                            # URDF has 6 links: base_link, link1, link2, link3, link4, link5
+                            # We want to control joints 1-5 (link1 through link5)
+                            active_links_mask=[False, True, True, True, True, True]
+                        )
+                        self.use_ikpy = True
+                        print(f"URDF loaded successfully from {urdf_path}!")
+                        urdf_loaded = True
+                        break
+                    else:
+                        print(f"URDF file not found at {urdf_path}")
+                except FileNotFoundError:
+                    print(f"URDF file not found at {urdf_path}")
+                except Exception as e:
+                    print(f"Error loading URDF from {urdf_path}: {e}")
+            
+            if urdf_loaded:
                 return
-            except FileNotFoundError:
-                print(f"URDF file not found at {self.config.URDF_PATH}")
-            except Exception as e:
-                print(f"Error loading URDF: {e}")
             
             # Create chain manually if URDF not available
             print("Creating kinematic chain manually...")
@@ -99,7 +114,7 @@ class DofbotIK:
                         rotation=[0, 0, 0],  # No rotation (fixed)
                     ),
                 ],
-                active_links_mask=[False, True, True, True, True, True, False]
+                active_links_mask=[False, True, True, True, True, True]
             )
             self.use_ikpy = True
             print("Kinematic chain created!")

@@ -20,7 +20,7 @@ class VisionConfig:
     # ==================== CAMERA SETTINGS ====================
     CAMERA_INDEX = 1  # USB camera index (try 0 if 1 doesn't work)
     # Use CAP_V4L2 on Raspberry Pi, CAP_DSHOW on Windows
-    CAMERA_BACKEND = cv2.CAP_DSHOW  # CAP_DSHOW for Windows, CAP_V4L2 for RPi
+    CAMERA_BACKEND = cv2.CAP_V4L2  # CAP_DSHOW for Windows, CAP_V4L2 for RPi
     CAMERA_WIDTH = 640   # Lower resolution for faster processing on RPi
     CAMERA_HEIGHT = 480
     CAMERA_FPS = 30
@@ -31,7 +31,7 @@ class VisionConfig:
     
     # Physical size of each cell in millimeters
     # Measure your actual board and update this!
-    CELL_SIZE_MM = 80.0
+    CELL_SIZE_MM = 30.0
     
     # Total board size
     BOARD_SIZE_MM = CELL_SIZE_MM * BOARD_SIZE  # 240mm
