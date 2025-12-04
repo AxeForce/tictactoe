@@ -20,8 +20,9 @@ class PieceDetection:
     color: str            # "white" or "black"
     piece_name: str       # e.g., "knight", "bishop"
     confidence: float     # Detection confidence (0-1)
-    bbox: Tuple[int, int, int, int]  # (x1, y1, x2, y2) in warped board coords
-    center: Tuple[int, int]  # Center point of detection
+    bbox: Tuple[int, int, int, int]  # (x1, y1, x2, y2) in camera frame
+    center: Tuple[int, int]  # Center/base point of detection in pixels
+    world_coords: Optional[Tuple[float, float, float]] = None  # (x, y, z) in robot frame (meters)
 
 
 @dataclass
@@ -223,7 +224,20 @@ class PieceDetector:
             if confidence < conf_threshold:
                 continue
             
-            # Convert to pixel coordinates
+            # Debug: print raw values for first few detections
+            if len(detections) < 3 and self.config.DEBUG_MODE:
+                print(f"  Raw YOLO: x={x_center:.1f}, y={y_center:.1f}, w={width:.1f}, h={height:.1f}, conf={confidence:.2f}")
+            
+            # Check if coordinates are normalized (0-1) or in pixels (0-416)
+            # If max values are <= 1, they're normalized
+            if x_center <= 1.0 and y_center <= 1.0 and width <= 1.0 and height <= 1.0:
+                # Normalized coordinates - scale to input size first
+                x_center *= input_size
+                y_center *= input_size
+                width *= input_size
+                height *= input_size
+            
+            # Convert to original image coordinates
             x_center *= orig_width / input_size
             y_center *= orig_height / input_size
             width *= orig_width / input_size
@@ -263,29 +277,27 @@ class PieceDetector:
         
         return detections
     
-    def detect(self, warped_board: np.ndarray) -> BoardState:
+    def detect_raw(self, frame: np.ndarray) -> List[PieceDetection]:
         """
-        Detect pieces on the warped board image.
+        Detect pieces on the raw camera frame.
         
         Args:
-            warped_board: Top-down view of the 3x3 board.
+            frame: Raw camera image (BGR).
             
         Returns:
-            BoardState with grid of pieces and detection details.
+            List of PieceDetection objects with coordinates in frame space.
         """
-        # Initialize empty 3x3 grid
-        grid = [[None for _ in range(3)] for _ in range(3)]
         detections = []
         
         if self.interpreter is None:
-            print("WARNING: No TFLite model loaded, returning empty board state.")
-            return BoardState(grid=grid, detections=detections)
+            print("WARNING: No TFLite model loaded, returning empty detections.")
+            return detections
         
         # Get image dimensions
-        orig_height, orig_width = warped_board.shape[:2]
+        orig_height, orig_width = frame.shape[:2]
         
-        # Preprocess
-        input_tensor = self._preprocess(warped_board)
+        # Preprocess (resizes to 416x416)
+        input_tensor = self._preprocess(frame)
         
         # Run inference
         self.interpreter.set_tensor(self.input_details[0]['index'], input_tensor)
@@ -296,15 +308,13 @@ class PieceDetector:
         
         # Dequantize output if model is quantized
         if self.is_quantized:
-            # output_float = (output_int8 - zero_point) * scale
             output = (output.astype(np.float32) - self.output_zero_point) * self.output_scale
         
-        # Postprocess
+        # Postprocess - coordinates are scaled back to original frame size
         raw_detections = self._postprocess(output, orig_width, orig_height)
         
         # Process detections
         for bbox, conf, cls_id in raw_detections:
-            # Get class name
             if cls_id >= len(self.config.PIECE_CLASS_NAMES):
                 continue
                 
@@ -314,21 +324,17 @@ class PieceDetector:
             if "pawn" in class_name.lower():
                 continue
             
-            # Check if it's a piece we care about
             if class_name not in self.config.PIECE_CLASSES:
                 continue
             
-            # Parse piece info
             piece_type = self.config.PIECE_CLASSES[class_name]
             color = "white" if "white" in piece_type else "black"
             piece_name = piece_type.replace("white_", "").replace("black_", "")
             
-            # Calculate center
             x1, y1, x2, y2 = bbox
             center_x = (x1 + x2) // 2
-            center_y = (y1 + y2) // 2
+            center_y = y2  # Use base of the piece to reduce parallax error
             
-            # Create detection object
             detection = PieceDetection(
                 piece_type=piece_type,
                 color=color,
@@ -338,15 +344,113 @@ class PieceDetector:
                 center=(int(center_x), int(center_y))
             )
             detections.append(detection)
-            
-            # Map to grid cell
-            row, col = self._point_to_cell(center_x, center_y)
-            if 0 <= row < 3 and 0 <= col < 3:
-                # If cell is empty or this detection has higher confidence
-                if grid[row][col] is None:
-                    grid[row][col] = piece_type
         
-        return BoardState(grid=grid, detections=detections)
+        return detections
+    
+    def map_to_board(
+        self, 
+        detections: List[PieceDetection], 
+        transform_matrix: np.ndarray,
+        pixel_to_world_matrix: Optional[np.ndarray] = None
+    ) -> BoardState:
+        """
+        Map piece detections from camera frame to board grid.
+        
+        Args:
+            detections: List of detections with coordinates in camera frame.
+            transform_matrix: Perspective transform from board_detector (pixel -> warped board).
+            pixel_to_world_matrix: Optional transform from pixel -> robot world coordinates.
+            
+        Returns:
+            BoardState with pieces mapped to 3x3 grid.
+        """
+        grid = [[None for _ in range(3)] for _ in range(3)]
+        mapped_detections = []
+        
+        for det in detections:
+            # Transform center point to board coordinates (for grid mapping)
+            center = np.array([[det.center]], dtype=np.float32)
+            transformed = cv2.perspectiveTransform(center, transform_matrix)
+            board_x, board_y = transformed[0][0]
+            
+            # Compute world coordinates if transform available
+            world_coords = None
+            if pixel_to_world_matrix is not None:
+                world = cv2.perspectiveTransform(center, pixel_to_world_matrix)
+                wx, wy = world[0][0]
+                wz = self.config.BOARD_ORIGIN_Z
+                world_coords = (float(wx), float(wy), float(wz))
+            
+            # Check if point is within board bounds
+            if 0 <= board_x < self.config.BOARD_OUTPUT_SIZE and \
+               0 <= board_y < self.config.BOARD_OUTPUT_SIZE:
+                
+                # Map to grid cell
+                row, col = self._point_to_cell(int(board_x), int(board_y))
+                
+                if 0 <= row < 3 and 0 <= col < 3:
+                    # Create new detection with board coordinates and world coords
+                    mapped_det = PieceDetection(
+                        piece_type=det.piece_type,
+                        color=det.color,
+                        piece_name=det.piece_name,
+                        confidence=det.confidence,
+                        bbox=det.bbox,  # Keep original bbox for drawing on frame
+                        center=(int(board_x), int(board_y)),  # Board coordinates (pixels)
+                        world_coords=world_coords  # Robot frame (meters)
+                    )
+                    mapped_detections.append(mapped_det)
+                    
+                    # Place in grid (higher confidence wins)
+                    if grid[row][col] is None:
+                        grid[row][col] = det.piece_type
+            
+            elif world_coords is not None:
+                # Piece is outside board but we still have world coordinates
+                # Include it in detections but not in grid
+                mapped_det = PieceDetection(
+                    piece_type=det.piece_type,
+                    color=det.color,
+                    piece_name=det.piece_name,
+                    confidence=det.confidence,
+                    bbox=det.bbox,
+                    center=det.center,  # Keep original pixel coords
+                    world_coords=world_coords
+                )
+                mapped_detections.append(mapped_det)
+        
+        return BoardState(grid=grid, detections=mapped_detections)
+    
+    def detect(
+        self, 
+        frame: np.ndarray, 
+        transform_matrix: Optional[np.ndarray] = None
+    ) -> BoardState:
+        """
+        Detect pieces on raw frame and map to board grid.
+        
+        Args:
+            frame: Raw camera image (BGR).
+            transform_matrix: Perspective transform from board detection.
+                              If None, assumes frame is already warped board.
+            
+        Returns:
+            BoardState with grid of pieces and detection details.
+        """
+        # Detect pieces on raw frame
+        raw_detections = self.detect_raw(frame)
+        
+        if transform_matrix is None:
+            # Legacy mode: frame is warped board, map directly
+            grid = [[None for _ in range(3)] for _ in range(3)]
+            for det in raw_detections:
+                row, col = self._point_to_cell(det.center[0], det.center[1])
+                if 0 <= row < 3 and 0 <= col < 3 and grid[row][col] is None:
+                    grid[row][col] = det.piece_type
+            return BoardState(grid=grid, detections=raw_detections)
+        
+        # Map detections to board grid using transform
+        return self.map_to_board(raw_detections, transform_matrix)
     
     def _point_to_cell(self, x: int, y: int) -> Tuple[int, int]:
         """

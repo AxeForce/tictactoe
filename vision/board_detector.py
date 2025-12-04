@@ -18,8 +18,38 @@ class BoardDetection:
     """
     warped: np.ndarray          # Top-down view of the board
     corners: np.ndarray         # Original corner positions in camera frame
-    transform_matrix: np.ndarray  # Perspective transform matrix
+    transform_matrix: np.ndarray  # Perspective transform matrix (pixel -> warped board)
+    pixel_to_world_matrix: np.ndarray  # Perspective transform (pixel -> robot world XY)
     success: bool               # Whether detection was successful
+    
+    def pixel_to_xyz(self, px: float, py: float, z: float = None, config: 'VisionConfig' = None) -> tuple:
+        """
+        Convert pixel coordinates to robot world coordinates.
+        
+        Args:
+            px: Pixel X coordinate in camera frame.
+            py: Pixel Y coordinate in camera frame.
+            z: Z coordinate (height). If None, uses board surface height from config.
+            config: VisionConfig to get default Z value.
+            
+        Returns:
+            (x, y, z) in meters, or None if transform not available.
+        """
+        if not self.success or self.pixel_to_world_matrix is None:
+            return None
+        
+        pt = np.array([[[px, py]]], dtype=np.float32)
+        world = cv2.perspectiveTransform(pt, self.pixel_to_world_matrix)
+        x, y = world[0][0]
+        
+        # Default Z from config if not provided
+        if z is None:
+            if config is not None:
+                z = config.BOARD_ORIGIN_Z
+            else:
+                z = 0.02  # Fallback default board height
+        
+        return float(x), float(y), float(z)
 
 
 class BoardDetector:
@@ -71,6 +101,7 @@ class BoardDetector:
                 warped=np.zeros((self.output_size, self.output_size, 3), dtype=np.uint8),
                 corners=np.array([]),
                 transform_matrix=np.eye(3),
+                pixel_to_world_matrix=None,
                 success=False
             )
         
@@ -82,16 +113,21 @@ class BoardDetector:
                 warped=np.zeros((self.output_size, self.output_size, 3), dtype=np.uint8),
                 corners=np.array([]),
                 transform_matrix=np.eye(3),
+                pixel_to_world_matrix=None,
                 success=False
             )
         
         # Warp the board to top-down view
         warped, matrix = self._warp_board(frame, board_corners)
         
+        # Compute pixel-to-world transform for direct coordinate mapping
+        pixel_to_world = self._compute_pixel_to_world(board_corners)
+        
         return BoardDetection(
             warped=warped,
             corners=board_corners,
             transform_matrix=matrix,
+            pixel_to_world_matrix=pixel_to_world,
             success=True
         )
     
@@ -174,6 +210,46 @@ class BoardDetector:
         )
         
         return warped, matrix
+    
+    def _compute_pixel_to_world(self, corners: np.ndarray) -> np.ndarray:
+        """
+        Compute homography from pixel coordinates to robot world coordinates.
+        
+        This allows direct conversion of any pixel in the camera frame to
+        physical (X, Y) coordinates in the robot's frame of reference.
+        
+        Args:
+            corners: 4 board corners in pixel coordinates.
+                     Order: [top-left, top-right, bottom-right, bottom-left]
+                     
+        Returns:
+            3x3 homography matrix for cv2.perspectiveTransform
+        """
+        # Source: pixel coordinates of board corners
+        src_points = corners.astype(np.float32)
+        
+        # Destination: physical coordinates in robot frame (meters)
+        # Board corners in robot coordinate system:
+        #   - top-left = (BOARD_ORIGIN_X, BOARD_ORIGIN_Y)
+        #   - top-right = (BOARD_ORIGIN_X, BOARD_ORIGIN_Y + board_size)
+        #   - bottom-right = (BOARD_ORIGIN_X + board_size, BOARD_ORIGIN_Y + board_size)
+        #   - bottom-left = (BOARD_ORIGIN_X + board_size, BOARD_ORIGIN_Y)
+        board_size = 3 * self.config.CELL_SIZE_M
+        
+        ox = self.config.BOARD_ORIGIN_X
+        oy = self.config.BOARD_ORIGIN_Y
+        
+        dst_points = np.array([
+            [ox, oy],                           # top-left
+            [ox, oy + board_size],              # top-right
+            [ox + board_size, oy + board_size], # bottom-right
+            [ox + board_size, oy],              # bottom-left
+        ], dtype=np.float32)
+        
+        # Compute homography: pixel -> world
+        matrix = cv2.getPerspectiveTransform(src_points, dst_points)
+        
+        return matrix
     
     def get_cell_region(
         self, 

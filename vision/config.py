@@ -20,7 +20,7 @@ class VisionConfig:
     # ==================== CAMERA SETTINGS ====================
     CAMERA_INDEX = 1  # USB camera index (try 0 if 1 doesn't work)
     # Use CAP_V4L2 on Raspberry Pi, CAP_DSHOW on Windows
-    CAMERA_BACKEND = cv2.CAP_V4L2  # V4L2 for RPi (use CAP_DSHOW on Windows)
+    CAMERA_BACKEND = cv2.CAP_DSHOW  # CAP_DSHOW for Windows, CAP_V4L2 for RPi
     CAMERA_WIDTH = 640   # Lower resolution for faster processing on RPi
     CAMERA_HEIGHT = 480
     CAMERA_FPS = 30
@@ -48,7 +48,7 @@ class VisionConfig:
     # ==================== TFLITE MODEL SETTINGS ====================
     # Path to your trained TFLite model
     TFLITE_MODEL_PATH = "models/best_int8.tflite"
-    TFLITE_CONFIDENCE = 0.5
+    TFLITE_CONFIDENCE = 0.25
     TFLITE_IOU_THRESHOLD = 0.45  # For NMS
     
     # Model input size (must match your trained model!)
@@ -82,6 +82,19 @@ class VisionConfig:
         "white-queen": "white_queen",
         "white-rook": "white_rook",
     }
+    
+    # ==================== ROBOT COORDINATE SYSTEM ====================
+    # Physical position of board corners in robot frame (METERS)
+    # These values MUST match arm_control/config.py!
+    # Used for pixel-to-world coordinate transform
+    
+    # Board origin (top-left corner, marker 0 inner corner)
+    BOARD_ORIGIN_X = 0.135   # 15cm in front of robot
+    BOARD_ORIGIN_Y = -0.12  # 12cm to the right
+    BOARD_ORIGIN_Z = 0.00   # 2cm above base level (board surface height)
+    
+    # Physical cell size in METERS (must match arm_control/config.py)
+    CELL_SIZE_M = 0.03  # 3cm = 30mm per cell
     
     # ==================== DEBUG SETTINGS ====================
     DEBUG_MODE = True
