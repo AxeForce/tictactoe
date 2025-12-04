@@ -221,5 +221,6 @@ Place pieces in order (Knight → Bishop → Rook → Queen → King):
 - Make sure target positions are within arm reach
 
 ## License
+cpk_dd33376397cd421b9b5a57503f775bd5.f61ee196c28c5f45b5a914e70340f5f6.rD7lg5vWbCZzfry1NQCheqLBwk8LMvC6
 
 Part of the ChessRobot project.
